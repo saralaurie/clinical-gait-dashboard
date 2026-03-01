@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Clinical Triage Portal</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #f8f9fa; display: flex; flex-direction: column; align-items: center; padding: 20px; }
+        .controls { margin-bottom: 20px; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.03); width: 600px; text-align: center; }
+        
+        button { background: #6c5ce7; border: none; padding: 12px 20px; border-radius: 8px; color: white; font-weight: bold; cursor: pointer; margin: 5px; transition: 0.3s; }
+        button:hover { background: #a29bfe; }
+        .btn-triage { background: #ff7675; }
+        select { padding: 10px; border-radius: 8px; border: 1px solid #dfe6e9; width: 60%; cursor: pointer; }
+        
+        .card { background: white; border-radius: 24px; box-shadow: 0 20px 40px rgba(0,0,0,0.06); width: 600px; overflow: hidden; margin-top: 20px; }
+        
+        /* High Risk (Red) Styling */
+        .risk-red { border-top: 10px solid #d63031; background-color: #fff5f5; }
+        .risk-red .goal-bar { background: #ff7675 !important; border-right: 2px solid #d63031; } /* Aesthetic fix for red bar */
+        .risk-red .clinical-alert { color: #d63031; font-weight: bold; font-size: 0.9em; text-transform: uppercase; margin-top: 10px; display: block; }
+
+        .risk-yellow { border-top: 10px solid #fdcb6e; background-color: #fffdf5; }
+        .risk-green { border-top: 10px solid #55efc4; }
+
+        .triage-table { width: 100%; border-collapse: collapse; }
+        .triage-table td, .triage-table th { padding: 15px; border-bottom: 1px solid rgba(0,0,0,0.05); text-align: left; }
+        
+        .goal-container { background: rgba(0,0,0,0.1); border-radius: 12px; height: 14px; width: 100%; margin: 10px 0; overflow: hidden; }
+        .goal-bar { background: #55efc4; height: 100%; transition: width 1s ease-in-out; }
+        .goal-label { font-size: 0.75em; font-weight: bold; color: #636e72; display: flex; justify-content: space-between; }
+        
+        .status-pill { padding: 4px 12px; border-radius: 12px; font-size: 0.85em; font-weight: bold; }
+        .pill-red { background: #d63031; color: white; }
+        
+        .trend-badge { font-size: 0.75em; padding: 6px 10px; border-radius: 6px; margin-left: 10px; font-weight: bold; }
+        .trend-up { background: #d1f7d1; color: #2ecc71; }
+        .trend-down { background: #ffdada; color: #d63031; }
+        
+        .history-item { margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid rgba(0,0,0,0.05); }
+    </style>
+</head>
+<body>
+
+<div class="controls">
+    <button class="btn-triage" onclick="loadTriageView()">⚠️ View High-Risk Triage</button>
+    <div style="margin-top:15px;">
+        <select id="patientSelect">
+            <option value="89186093">Bill Burr (89186093)</option>
+            <option value="89186257">Christina P (89186257)</option>
+            <option value="131291295">Tom Segura (131291295)</option>
+            <option value="131291299">Julie Smith (131291299)</option>
+            <option value="131291504">Jim Liu (131291504)</option>
+        </select>
+        <button onclick="loadPatientData()">Search</button>
+    </div>
+</div>
+
+<div id="app"></div>
+
+<script>
+    const baseUrl = 'https://hapi.fhir.org/baseR4';
+    const myIds = "89186093,89186257,131291295,131291299,131291504"; 
+    const COMMUNITY_GOAL = 1.2;
+
+    async function loadTriageView() {
+        const appDiv = document.getElementById('app');
+        appDiv.innerHTML = "<h3>Syncing Clinical Data...</h3>";
+        try {
+            const res = await fetch(`${baseUrl}/Observation?code=43150-2&patient=${myIds}&_sort=-date&_count=100&_include=Observation:patient`);
+            const data = await res.json();
+            const latestMap = new Map();
+            const names = {};
+
+            data.entry.forEach(e => {
+                if (e.resource.resourceType === "Patient") {
+                    const n = e.resource.name[0];
+                    names[e.resource.id] = `${n.given ? n.given[0] : ''} ${n.family || ''}`;
+                } else {
+                    const pId = e.resource.subject.reference.split('/').pop();
+                    if (!latestMap.has(pId)) latestMap.set(pId, e.resource);
+                }
+            });
+
+            const critical = Array.from(latestMap.values()).filter(o => o.valueQuantity.value < 0.6);
+
+            let rows = critical.map(o => {
+                const pId = o.subject.reference.split('/').pop();
+                return `<tr>
+                    <td><strong>${names[pId]}</strong><br><small style="color:#d63031;">HIGH RISK OF FALLS</small></td>
+                    <td><span class="status-pill pill-red">${o.valueQuantity.value} m/s</span></td>
+                    <td>${new Date(o.effectiveDateTime).toLocaleDateString()}</td>
+                </tr>`;
+            }).join('');
+
+            appDiv.innerHTML = `<div class="card risk-red" style="padding:20px;">
+                <h2 style="color:#d63031;">⚠️ Critical Alert: High Fall Risk</h2>
+                <table class="triage-table">
+                    <thead><tr><th>Patient Status</th><th>Speed</th><th>Date</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>`;
+        } catch (e) { appDiv.innerHTML = "Connection Error."; }
+    }
+
+    async function loadPatientData() {
+        const pId = document.getElementById('patientSelect').value;
+        const appDiv = document.getElementById('app');
+        try {
+            const res = await fetch(`${baseUrl}/Observation?patient=${pId}&code=43150-2&_sort=-date&_include=Observation:patient`);
+            const data = await res.json();
+            const patient = data.entry.find(e => e.resource.resourceType === "Patient").resource;
+            const obs = data.entry.filter(e => e.resource.resourceType === "Observation");
+            const latest = obs[0].resource;
+            const val = latest.valueQuantity.value;
+            
+            let trendHtml = "";
+            if (obs.length > 1) {
+                const prevVal = obs[1].resource.valueQuantity.value;
+                if (val > prevVal) trendHtml = `<span class="trend-badge trend-up">📈 Improving</span>`;
+                else if (val < prevVal) trendHtml = `<span class="trend-badge trend-down">📉 Declining</span>`;
+            }
+
+            const percentOfGoal = Math.min((val / COMMUNITY_GOAL) * 100, 100).toFixed(0);
+            const isCritical = val < 0.6;
+            const risk = isCritical ? "risk-red" : val < 1.0 ? "risk-yellow" : "risk-green";
+
+            appDiv.innerHTML = `<div class="card ${risk}" style="padding:30px;">
+                <h1 style="margin-bottom:5px;">${patient.name[0].given[0]} ${patient.name[0].family || ''} ${trendHtml}</h1>
+                ${isCritical ? '<span class="clinical-alert">⚠️ High Risk of Falls / Re-hospitalization</span>' : ''}
+                <div style="font-size:3.5em; font-weight:bold; margin-bottom:10px;">${val} <small style="font-size:0.4em; color:#7f8c8d;">m/s</small></div>
+                
+                <div class="goal-label">
+                    <span>Independence Goal: ${COMMUNITY_GOAL} m/s</span>
+                    <span>${percentOfGoal}% achieved</span>
+                </div>
+                <div class="goal-container">
+                    <div class="goal-bar" style="width: ${percentOfGoal}%"></div>
+                </div>
+
+                <hr style="border:0; border-top:1px solid rgba(0,0,0,0.1); margin:20px 0;">
+                <h3 style="color:#636e72;">Assessment History</h3>
+                <div style="max-height:300px; overflow-y:auto;">
+                    ${obs.map(o => `
+                    <div class="history-item">
+                        <strong>${new Date(o.resource.effectiveDateTime).toLocaleDateString()}</strong>: ${o.resource.valueQuantity.value} m/s
+                        <div style="font-style:italic; color:#7f8c8d; font-size:0.9em; margin-top:4px;">
+                            "${o.resource.note ? o.resource.note[0].text : 'Routine assessment.'}"
+                        </div>
+                    </div>`).join('')}
+                </div>
+            </div>`;
+        } catch (e) { appDiv.innerHTML = "Patient data not found."; }
+    }
+</script>
+</body>
+</html>
